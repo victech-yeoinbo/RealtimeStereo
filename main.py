@@ -135,14 +135,14 @@ def test(imgL, imgR, disp_true):
         times = imgL.shape[3]//16
         right_pad = (times+1)*16-imgL.shape[3]
     else:
-        right_pad = 0  
+        right_pad = 0
 
     imgL = F.pad(imgL,(0, right_pad, top_pad ,0))
     imgR = F.pad(imgR,(0, right_pad, top_pad ,0))
 
     with torch.no_grad():
         output3 = model(imgL, imgR)
-        output3 = torch.squeeze(output3)
+        output3 = torch.squeeze(output3, 1)
     
     if top_pad != 0:
         img = output3[:,top_pad:,:]
