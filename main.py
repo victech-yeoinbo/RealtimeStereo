@@ -41,12 +41,12 @@ if args.cuda:
 all_left_img, all_right_img, all_left_disp, test_left_img, test_right_img, test_left_disp = lt.dataloader(args.datapath)
 
 TrainImgLoader = torch.utils.data.DataLoader(
-         DA.myImageFloder(all_left_img,all_right_img,all_left_disp, True),
-         batch_size= 12, shuffle= True, num_workers= 8, drop_last=False)
+        DA.myImageFloder(all_left_img, all_right_img, all_left_disp, True),
+        batch_size=12, shuffle=True, num_workers=8, drop_last=False)
 
 TestImgLoader = torch.utils.data.DataLoader(
-         DA.myImageFloder(test_left_img,test_right_img,test_left_disp, False),
-         batch_size= 8, shuffle= False, num_workers= 4, drop_last=False)
+        DA.myImageFloder(test_left_img, test_right_img, test_left_disp, False),
+        batch_size=8, shuffle=False, num_workers=4, drop_last=False)
 
 if args.model == 'stackhourglass':
     model = stackhourglass(args.maxdisp)
@@ -79,43 +79,44 @@ def train(imgL,imgR, disp_L):
     #---------
     mask = disp_true < args.maxdisp
     mask.detach_()
-    #----
+    #---------
     optimizer.zero_grad()
     
     if args.model == 'stackhourglass' or args.model == 'RTStereoNet':
         output1, output2, output3 = model(imgL,imgR)
-        output1 = torch.squeeze(output1,1)
-        output2 = torch.squeeze(output2,1)
-        output3 = torch.squeeze(output3,1)
-        loss = 0.25*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True) + 0.5*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True) + F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True) 
+        output1 = torch.squeeze(output1, 1)
+        output2 = torch.squeeze(output2, 1)
+        output3 = torch.squeeze(output3, 1)
+        loss = 0.25*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True) + 
+            0.5*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True) + 
+            F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True) 
     elif args.model == 'basic':
-        output = model(imgL,imgR)
-        output = torch.squeeze(output,1)
+        output = model(imgL, imgR)
+        output = torch.squeeze(output, 1)
         loss = F.smooth_l1_loss(output[mask], disp_true[mask], size_average=True)
 
     loss.backward()
     optimizer.step()
-    
+
     return loss.data
 
 def test(imgL,imgR,disp_true):
-
     model.eval()
 
     if args.cuda:
         imgL, imgR, disp_true = imgL.cuda(), imgR.cuda(), disp_true.cuda()
     #---------
     mask = disp_true < 192
-    #----
+    #---------
 
     if imgL.shape[2] % 16 != 0:
-        times = imgL.shape[2]//16       
+        times = imgL.shape[2]//16
         top_pad = (times+1)*16 -imgL.shape[2]
     else:
         top_pad = 0
 
     if imgL.shape[3] % 16 != 0:
-        times = imgL.shape[3]//16                       
+        times = imgL.shape[3]//16
         right_pad = (times+1)*16-imgL.shape[3]
     else:
         right_pad = 0  
@@ -145,19 +146,18 @@ def adjust_learning_rate(optimizer, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-
 def main():
     start_full_time = time.time()
 
     for epoch in range(0, args.epochs):
         print('This is %d-th epoch' %(epoch))
         total_train_loss = 0
-        adjust_learning_rate(optimizer,epoch)
+        adjust_learning_rate(optimizer, epoch)
 
         ## training ##
         for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(TrainImgLoader):
             start_time = time.time()
-            loss = train(imgL_crop,imgR_crop, disp_crop_L)
+            loss = train(imgL_crop, imgR_crop, disp_crop_L)
             print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss, time.time() - start_time))
             total_train_loss += loss
         print('epoch %d total training loss = %.3f' %(epoch, total_train_loss/len(TrainImgLoader)))
@@ -167,7 +167,7 @@ def main():
         torch.save({
             'epoch': epoch,
             'state_dict': model.state_dict(),
-                    'train_loss': total_train_loss/len(TrainImgLoader),
+            'train_loss': total_train_loss/len(TrainImgLoader),
         }, savefilename)
 
     print('full training time = %.2f HR' %((time.time() - start_full_time)/3600))
@@ -175,7 +175,7 @@ def main():
     #------------- TEST ------------------------------------------------------------
     total_test_loss = 0
     for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
-        test_loss = test(imgL,imgR, disp_L)
+        test_loss = test(imgL, imgR, disp_L)
         print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
         total_test_loss += test_loss
 
