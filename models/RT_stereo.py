@@ -9,11 +9,11 @@ import numpy as np
 norm_layer2d = nn.BatchNorm2d 
 norm_layer3d = nn.BatchNorm3d 
 
-
 def convbn(in_planes, out_planes, kernel_size, stride, pad, dilation, groups = 1):
-
-    return nn.Sequential(nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=dilation if dilation > 1 else pad, dilation = dilation, groups = groups, bias=False),
-                         norm_layer2d(out_planes))
+    return nn.Sequential(
+        nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride,
+                  padding=dilation if dilation > 1 else pad, dilation=dilation, groups=groups, bias=False),
+        norm_layer2d(out_planes))
 
 class featexchange(nn.Module):
     def __init__(self):
@@ -31,17 +31,16 @@ class featexchange(nn.Module):
         self.downconv4 = nn.Sequential(nn.Conv2d(4, 8, 3, 2, 1, bias=False),
                                        norm_layer2d(8))
         self.upconv8_2 = nn.Sequential(nn.Conv2d(20, 8, 1, 1, 0, bias=False),
-                                     norm_layer2d(8))
+                                       norm_layer2d(8))
 
         self.x8_fusion = nn.Sequential(nn.ReLU(),convbn(20, 20, 3, 1, 1, 1, 1),
                                        nn.ReLU(),nn.Conv2d(20, 20, 3, 1, 1, bias=False))
         self.downconv81 = nn.Sequential(nn.Conv2d(8, 20, 3, 2, 1, bias=False),
-                                       norm_layer2d(20))
+                                        norm_layer2d(20))
         self.downconv82 = nn.Sequential(nn.Conv2d(8, 20, 3, 2, 1, bias=False),
-                                       norm_layer2d(20))
+                                        norm_layer2d(20))
 
     def forward(self, x2, x4, x8, attention):
-
         A = torch.split(attention,[4,8,20],dim=1)
 
         x4tox2 = self.upconv4(F.upsample(x4, (x2.size()[2],x2.size()[3])))
@@ -68,26 +67,26 @@ class feature_extraction(nn.Module):
         self.inplanes = 1
         self.firstconv = nn.Sequential(nn.Conv2d(3, 3, 3, 2, 1, bias=False),
                                        nn.Conv2d(3, 3, 3, 2, 1, bias=False),
-		                               nn.BatchNorm2d(3),                                                                              
+                                       nn.BatchNorm2d(3),
                                        nn.ReLU(),
-				                       nn.Conv2d(3, 4, 1, 1, 0, bias=False),
+                                       nn.Conv2d(3, 4, 1, 1, 0, bias=False),
                                        convbn(4, 4, 3, 1, 1, 1, 4),
                                        nn.ReLU(),
-				                       nn.Conv2d(4, 4, 1, 1, 0, bias=False),                                     
+                                       nn.Conv2d(4, 4, 1, 1, 0, bias=False),
                                        convbn(4, 4, 3, 1, 1, 1, 4)) # 1/4
 
         self.stage2 = nn.Sequential(nn.ReLU(),
                                     nn.Conv2d(4, 8, 1, 1, 0, bias=False),
                                     convbn(8, 8, 3, 2, 1, 1, 8),
                                     nn.ReLU(),
-				                    nn.Conv2d(8, 8, 1, 1, 0, bias=False),
+                                    nn.Conv2d(8, 8, 1, 1, 0, bias=False),
                                     convbn(8, 8, 3, 1, 1, 1, 8)) # 1/8
 
         self.stage3 = nn.Sequential(nn.ReLU(),
                                     nn.Conv2d(8, 20, 1, 1, 0, bias=False),
                                     convbn(20, 20, 3, 2, 1, 1, 20),
                                     nn.ReLU(),
-				                    nn.Conv2d(20, 20, 1, 1, 0, bias=False),
+                                    nn.Conv2d(20, 20, 1, 1, 0, bias=False),
                                     convbn(20, 20, 3, 1, 1, 1,20)) #1/16
                 
         self.attention = nn.Sequential(nn.ReLU(),
@@ -96,18 +95,17 @@ class feature_extraction(nn.Module):
                                     nn.ReLU(),
                                     nn.Conv2d(10, 32, 1, 1, 0, bias=True),
                                     nn.Sigmoid(),
-                                    ) 
+                                    )
         
         self.fusion = featexchange()
-        
 
     def forward(self, x):
         #stage 1# 1x
         out_s1 = self.firstconv(x)
-        out_s2 = self.stage2(out_s1) 
-        out_s3 = self.stage3(out_s2)        
-        attention = self.attention(out_s3)        
-        out_s1, out_s2, out_s3 = self.fusion(out_s1, out_s2, out_s3, attention)          
+        out_s2 = self.stage2(out_s1)
+        out_s3 = self.stage3(out_s2)
+        attention = self.attention(out_s3)
+        out_s1, out_s2, out_s3 = self.fusion(out_s1, out_s2, out_s3, attention)
         return [out_s3, out_s2, out_s1]
 
 def batch_relu_conv3d(in_planes, out_planes, kernel_size=3, stride=1, pad=1, bn3d=True):
@@ -184,16 +182,15 @@ class RTStereoNet(nn.Module):
         output = nn.functional.grid_sample(x, vgrid)
         return output
 
-
     def _build_volume_2d(self, feat_l, feat_r, maxdisp, stride=1):
         assert maxdisp % stride == 0  # Assume maxdisp is multiple of stride
         b,c,h,w = feat_l.size()
         cost = torch.zeros(b, 1, maxdisp//stride, h, w).cuda().requires_grad_(False)
         for i in range(0, maxdisp, stride):
             if i > 0:
-                cost[:, :, i//stride, :, i:] = torch.norm(feat_l[:, :, :, i:] - feat_r[:, :, :, :-i], p=1, dim = 1,keepdim=True)
+                cost[:, :, i//stride, :, i:] = torch.norm(feat_l[:, :, :, i:] - feat_r[:, :, :, :-i], p=1, dim = 1, keepdim=True)
             else:
-                cost[:, :, i//stride, :, i:] = torch.norm(feat_l[:, :, :, :] - feat_r[:, :, :, :], p=1,  dim =1,keepdim=True)
+                cost[:, :, i//stride, :, i:] = torch.norm(feat_l[:, :, :, :] - feat_r[:, :, :, :], p=1,  dim =1, keepdim=True)
         return cost.contiguous()
 
     def _build_volume_2d3(self, feat_l, feat_r, maxdisp, disp, stride=1):
@@ -204,12 +201,11 @@ class RTStereoNet(nn.Module):
         batch_disp = batch_disp - batch_shift
         batch_feat_l = feat_l[:,None,:,:,:].repeat(1,maxdisp*2-1, 1, 1, 1).view(-1,c,h,w)
         batch_feat_r = feat_r[:,None,:,:,:].repeat(1,maxdisp*2-1, 1, 1, 1).view(-1,c,h,w)
-        cost = torch.norm(batch_feat_l - self.warp(batch_feat_r, batch_disp), 1, 1,keepdim=True)
+        cost = torch.norm(batch_feat_l - self.warp(batch_feat_r, batch_disp), 1, 1, keepdim=True)
         cost = cost.view(b,1 ,-1, h, w).contiguous()
         return cost
 
     def forward(self, left, right):
-
         img_size = left.size()
 
         feats_l = self.feature_extraction(left)
@@ -217,8 +213,8 @@ class RTStereoNet(nn.Module):
         pred = []
         for scale in range(len(feats_l)):
             if scale > 0:
-                wflow = F.upsample(pred[scale-1], (feats_l[scale].size(2), feats_l[scale].size(3)),
-                                   mode='bilinear') * feats_l[scale].size(2) / img_size[2]
+                wflow = F.upsample(pred[scale-1], (feats_l[scale].size(2), feats_l[scale].size(3)), mode='bilinear') *
+                        feats_l[scale].size(2) / img_size[2]
                 cost = self._build_volume_2d3(feats_l[scale], feats_r[scale], 3, wflow, stride=1)
             else:
                 cost = self._build_volume_2d(feats_l[scale], feats_r[scale], 12, stride=1)
@@ -233,11 +229,11 @@ class RTStereoNet(nn.Module):
                 pred.append(disp_up)
             else:
                 pred_low_res = disparityregression2(-2, 3, stride=1)(F.softmax(cost, dim=1))
-                pred_low_res = pred_low_res * img_size[2] / pred_low_res.size(2) 
+                pred_low_res = pred_low_res * img_size[2] / pred_low_res.size(2)
                 disp_up = F.upsample(pred_low_res, (img_size[2], img_size[3]), mode='bilinear')
-                pred.append(disp_up+pred[scale-1]) #
+                pred.append(disp_up + pred[scale-1]) #
         if self.training:
-            return pred[0],pred[1],pred[2]
+            return pred[0], pred[1], pred[2]
         else:
             return pred[-1]
 
