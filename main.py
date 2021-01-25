@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 import time
 import math
@@ -21,7 +22,7 @@ parser.add_argument('--datatype', default='2015',
                     help='datapath')
 parser.add_argument('--datapath', default='/media/jiaren/ImageNet/SceneFlowData/',
                     help='datapath')
-parser.add_argument('--epochs', type=int, default=10,
+parser.add_argument('--epochs', type=int, default=300,
                     help='number of epochs to train')
 parser.add_argument('--lr', type=float, default=5e-4,
                     help='learning rate')
@@ -157,9 +158,9 @@ def test(imgL, imgR, disp_true):
     return loss.data.cpu()
 
 def adjust_learning_rate(optimizer, epoch):
-    if epoch <= 100:
+    if epoch <= 150:
         lr = args.lr
-    elif epoch <= 150:
+    elif epoch <= 200:
         lr = args.lr * 0.1
     else:
         lr = args.lr * 0.01
@@ -192,6 +193,7 @@ def error_estimating(disp, ground_truth, maxdisp=192, print_val=False):
     # return err3.float() / mask.sum().float()
 
 def main():
+    writer = SummaryWriter()
     start_full_time = time.time()
 
     if not os.path.isdir(args.savemodel):
@@ -199,27 +201,29 @@ def main():
 
     for epoch in range(0, args.epochs):
         print('This is %d-th epoch' %(epoch))
-
         start_epoch_time = time.time()
-        total_train_loss = 0
         adjust_learning_rate(optimizer, epoch)
 
         ## training
+        total_train_loss = 0
         for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(TrainImgLoader):
             loss = train(imgL_crop, imgR_crop, disp_crop_L)
             print('epoch %d : [%d/%d] training loss = %.3f' % (epoch, batch_idx, len(TrainImgLoader), loss))
             total_train_loss += loss
+        avg_train_loss = total_train_loss/len(TrainImgLoader)
+        writer.add_scalar("Loss/train", avg_train_loss, epoch)
         print('epoch %d : total training loss = %.3f, time = %.2f'
-             % (epoch, total_train_loss/len(TrainImgLoader), time.time() - start_epoch_time))
+             % (epoch, avg_train_loss, time.time() - start_epoch_time))
 
         ## test
-        if epoch % 1 == 0:
-            total_test_loss = 0
-            for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
-                test_loss = test(imgL, imgR, disp_L)
-                total_test_loss += test_loss
-                print('epoch %d : [%d/%d] test loss = %.3f' % (epoch, batch_idx, len(TestImgLoader), test_loss))
-            print('epoch %d : total test loss = %.3f' % (epoch, total_test_loss/len(TestImgLoader)))
+        total_test_loss = 0
+        for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
+            test_loss = test(imgL, imgR, disp_L)
+            total_test_loss += test_loss
+            print('epoch %d : [%d/%d] test loss = %.3f' % (epoch, batch_idx, len(TestImgLoader), test_loss))
+        avg_test_loss = total_test_loss/len(TestImgLoader)
+        writer.add_scalar("Epe/val", avg_test_loss, epoch)
+        print('epoch %d : total test loss = %.3f' % (epoch, avg_test_loss))
 
         ## save
         savefilename = args.savemodel+'/checkpoint_'+str(epoch)+'.tar'
@@ -232,7 +236,14 @@ def main():
         ## time
         print('epoch %d : total time = %.2f' % (epoch, time.time() - start_epoch_time))
 
+        writer.flush()
+
     print('full training time = %.2f HR' % ((time.time() - start_full_time)/3600))
+    writer.close()
 
 if __name__ == '__main__':
     main()
+
+'''
+python3 main.py --maxdisp 192 --model RTStereoNet --datapath /workspace/AnyNet/dataset_dexter --datatype dexter --epochs 300 --savemodel /workspace/RealtimeStereo/result
+'''
