@@ -10,8 +10,6 @@ import torch.nn.functional as F
 import numpy as np
 import time
 import math
-from dataloader import listflowfile as lt
-from dataloader import SecenFlowLoader as DA
 from models import *
 
 parser = argparse.ArgumentParser(description='PSMNet')
@@ -19,10 +17,14 @@ parser.add_argument('--maxdisp', type=int ,default=192,
                     help='maxium disparity')
 parser.add_argument('--model', default='RTStereoNet',
                     help='select model')
+parser.add_argument('--datatype', default='2015',
+                    help='datapath')
 parser.add_argument('--datapath', default='/media/jiaren/ImageNet/SceneFlowData/',
                     help='datapath')
 parser.add_argument('--epochs', type=int, default=10,
                     help='number of epochs to train')
+parser.add_argument('--lr', type=float, default=5e-4,
+                    help='learning rate')
 parser.add_argument('--loadmodel', default= None,
                     help='load model')
 parser.add_argument('--savemodel', default='./',
@@ -37,6 +39,19 @@ args.cuda = not args.no_cuda and torch.cuda.is_available()
 torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
+
+if args.datatype == '2015':
+    from dataloader import KITTIloader2015 as lt
+    from dataloader import KITTILoader as DA
+elif args.datatype == '2012':
+    from dataloader import KITTIloader2012 as lt
+    from dataloader import KITTILoader as DA
+elif args.datatype == 'dexter':
+    from dataloader import dexter_list_file as lt
+    from dataloader import dexter_loader as DA
+else:
+    from dataloader import listflowfile as lt
+    from dataloader import SecenFlowLoader as DA
 
 all_left_img, all_right_img, all_left_disp, test_left_img, test_right_img, test_left_disp = lt.dataloader(args.datapath)
 
@@ -70,7 +85,7 @@ print('Number of model parameters: {}'.format(sum([p.data.nelement() for p in mo
 
 optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.9, 0.999), weight_decay=1e-4)
 
-def train(imgL,imgR, disp_L):
+def train(imgL, imgR, disp_L):
     model.train()
 
     if args.cuda:
@@ -87,9 +102,9 @@ def train(imgL,imgR, disp_L):
         output1 = torch.squeeze(output1, 1)
         output2 = torch.squeeze(output2, 1)
         output3 = torch.squeeze(output3, 1)
-        loss = 0.25*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True) + 
-            0.5*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True) + 
-            F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True) 
+        loss = (0.25*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True)
+            + 0.5*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True)
+            + F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True))
     elif args.model == 'basic':
         output = model(imgL, imgR)
         output = torch.squeeze(output, 1)
@@ -100,7 +115,7 @@ def train(imgL,imgR, disp_L):
 
     return loss.data
 
-def test(imgL,imgR,disp_true):
+def test(imgL, imgR, disp_true):
     model.eval()
 
     if args.cuda:
@@ -121,14 +136,14 @@ def test(imgL,imgR,disp_true):
     else:
         right_pad = 0  
 
-    imgL = F.pad(imgL,(0,right_pad, top_pad,0))
-    imgR = F.pad(imgR,(0,right_pad, top_pad,0))
+    imgL = F.pad(imgL,(0, right_pad, top_pad ,0))
+    imgR = F.pad(imgR,(0, right_pad, top_pad ,0))
 
     with torch.no_grad():
-        output3 = model(imgL,imgR)
+        output3 = model(imgL, imgR)
         output3 = torch.squeeze(output3)
     
-    if top_pad !=0:
+    if top_pad != 0:
         img = output3[:,top_pad:,:]
     else:
         img = output3
@@ -136,33 +151,77 @@ def test(imgL,imgR,disp_true):
     if len(disp_true[mask])==0:
         loss = 0
     else:
-        loss = F.l1_loss(img[mask], disp_true[mask]) #torch.mean(torch.abs(img[mask]-disp_true[mask]))  # end-point-error
+        loss = F.l1_loss(img[mask], disp_true[mask])
+        #loss = torch.mean(torch.abs(img[mask]-disp_true[mask]))  # end-point-error
 
     return loss.data.cpu()
 
 def adjust_learning_rate(optimizer, epoch):
-    lr = 0.0005
-    print(lr)
+    if epoch <= 100:
+        lr = args.lr
+    elif epoch <= 150:
+        lr = args.lr * 0.1
+    else:
+        lr = args.lr * 0.01
+    print(f'lr = {lr}')
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+
+def epe_metric(d_est, d_gt, mask, use_np=False):
+    d_est, d_gt = d_est[mask], d_gt[mask]
+    if use_np:
+        epe = np.mean(np.abs(d_est - d_gt))
+    else:
+        epe = torch.mean(torch.abs(d_est - d_gt))
+    return epe
+
+def error_estimating(disp, ground_truth, maxdisp=192, print_val=False):
+    gt = ground_truth
+    mask = gt > 0
+    mask = mask * (gt < maxdisp)
+    return epe_metric(disp, gt, mask).float()
+
+    # errmap = torch.abs(disp - gt)
+    # if print_val:
+    #     print(f'disp.shape={disp.shape}') # (16, 480, 640)
+    #     print(f'errmap={errmap[0][300]}')
+    #     print(f'disp={disp[0][300]}')
+    #     print(f'gt={gt[0][300]}')
+
+    # err3 = ((errmap[mask] > 3.) & (errmap[mask] / gt[mask] > 0.05)).sum()
+    # return err3.float() / mask.sum().float()
 
 def main():
     start_full_time = time.time()
 
+    if not os.path.isdir(args.savemodel):
+        os.makedirs(args.savemodel)
+
     for epoch in range(0, args.epochs):
         print('This is %d-th epoch' %(epoch))
+
+        start_epoch_time = time.time()
         total_train_loss = 0
         adjust_learning_rate(optimizer, epoch)
 
-        ## training ##
+        ## training
         for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(TrainImgLoader):
-            start_time = time.time()
             loss = train(imgL_crop, imgR_crop, disp_crop_L)
-            print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss, time.time() - start_time))
+            print('epoch %d : [%d/%d] training loss = %.3f' % (epoch, batch_idx, len(TrainImgLoader), loss))
             total_train_loss += loss
-        print('epoch %d total training loss = %.3f' %(epoch, total_train_loss/len(TrainImgLoader)))
+        print('epoch %d : total training loss = %.3f, time = %.2f'
+             % (epoch, total_train_loss/len(TrainImgLoader), time.time() - start_epoch_time))
 
-        ## Save ##
+        ## test
+        if epoch % 1 == 0:
+            total_test_loss = 0
+            for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
+                test_loss = test(imgL, imgR, disp_L)
+                total_test_loss += test_loss
+                print('epoch %d : [%d/%d] test loss = %.3f' % (epoch, batch_idx, len(TestImgLoader), test_loss))
+            print('epoch %d : total test loss = %.3f' % (epoch, total_test_loss/len(TestImgLoader)))
+
+        ## save
         savefilename = args.savemodel+'/checkpoint_'+str(epoch)+'.tar'
         torch.save({
             'epoch': epoch,
@@ -170,23 +229,10 @@ def main():
             'train_loss': total_train_loss/len(TrainImgLoader),
         }, savefilename)
 
-    print('full training time = %.2f HR' %((time.time() - start_full_time)/3600))
+        ## time
+        print('epoch %d : total time = %.2f' % (epoch, time.time() - start_epoch_time))
 
-    #------------- TEST ------------------------------------------------------------
-    total_test_loss = 0
-    for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
-        test_loss = test(imgL, imgR, disp_L)
-        print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
-        total_test_loss += test_loss
-
-    print('total test loss = %.3f' %(total_test_loss/len(TestImgLoader)))
-    #----------------------------------------------------------------------------------
-    #SAVE test information
-    savefilename = args.savemodel+'testinformation.tar'
-    torch.save({
-        'test_loss': total_test_loss/len(TestImgLoader),
-    }, savefilename)
+    print('full training time = %.2f HR' % ((time.time() - start_full_time)/3600))
 
 if __name__ == '__main__':
     main()
-    

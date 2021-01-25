@@ -213,8 +213,8 @@ class RTStereoNet(nn.Module):
         pred = []
         for scale in range(len(feats_l)):
             if scale > 0:
-                wflow = F.upsample(pred[scale-1], (feats_l[scale].size(2), feats_l[scale].size(3)), mode='bilinear') *
-                        feats_l[scale].size(2) / img_size[2]
+                wflow = (F.upsample(pred[scale-1], (feats_l[scale].size(2), feats_l[scale].size(3)), mode='bilinear') *
+                        feats_l[scale].size(2) / img_size[2])
                 cost = self._build_volume_2d3(feats_l[scale], feats_r[scale], 3, wflow, stride=1)
             else:
                 cost = self._build_volume_2d(feats_l[scale], feats_r[scale], 12, stride=1)

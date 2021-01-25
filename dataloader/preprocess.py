@@ -84,8 +84,6 @@ def get_transform(name='imagenet', input_size=None,
                               scale_size=scale_size, normalize=normalize)
 
 
-
-
 class Lighting(object):
     """Lighting noise(AlexNet - style PCA - based noise)"""
 

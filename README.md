@@ -25,3 +25,12 @@ python main.py --maxdisp 192 \
                --loadmodel (optional)\
                --savemodel (path for saving model)
 ```
+
+```
+python3 main.py --maxdisp 192 \
+               --model RTStereoNet \
+               --datapath /workspace/AnyNet/dataset_dexter \
+               --datatype dexter \
+               --epochs 100 \
+               --savemodel /workspace/RealtimeStereo/result
+```

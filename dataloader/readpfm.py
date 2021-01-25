@@ -1,9 +1,9 @@
 import re
 import numpy as np
 import sys
-import chardet 
 
-def readPFM(file):
+
+def readPFM(file, encoding='utf-8'):
     file = open(file, 'rb')
 
     color = None
@@ -13,33 +13,30 @@ def readPFM(file):
     endian = None
 
     header = file.readline().rstrip()
-    encode_type = chardet.detect(header)  
-    header = header.decode(encode_type['encoding'])
-    if header == 'PF':
+    if header == b'PF':
         color = True
-    elif header == 'Pf':
+    elif header == b'Pf':
         color = False
     else:
         raise Exception('Not a PFM file.')
 
-    dim_match = re.match(r'^(\d+)\s(\d+)\s$', file.readline().decode(encode_type['encoding']))
+    dim_match = re.match(r'^(\d+)\s(\d+)\s$', file.readline().decode(encoding))
     if dim_match:
         width, height = map(int, dim_match.groups())
     else:
         raise Exception('Malformed PFM header.')
 
-    scale = float(file.readline().rstrip().decode(encode_type['encoding']))
-    if scale < 0: # little-endian
+    scale = float(file.readline().rstrip())
+    if scale < 0:  # little-endian
         endian = '<'
         scale = -scale
     else:
-        endian = '>' # big-endian
+        endian = '>'  # big-endian
 
     data = np.fromfile(file, endian + 'f')
     shape = (height, width, 3) if color else (height, width)
 
     data = np.reshape(data, shape)
     data = np.flipud(data)
+    file.close()
     return data, scale
-
-
