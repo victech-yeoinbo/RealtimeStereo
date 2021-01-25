@@ -1,7 +1,6 @@
 import re
 import numpy as np
 import sys
- 
 
 def readPFM(file):
     file = open(file, 'rb')
@@ -38,5 +37,7 @@ def readPFM(file):
 
     data = np.reshape(data, shape)
     data = np.flipud(data)
+
+    close(file)
     return data, scale
 
