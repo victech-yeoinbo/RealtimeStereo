@@ -35,6 +35,7 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 args = parser.parse_args()
+
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 torch.manual_seed(args.seed)
@@ -137,8 +138,8 @@ def test(imgL, imgR, disp_true):
     else:
         right_pad = 0
 
-    imgL = F.pad(imgL,(0, right_pad, top_pad ,0))
-    imgR = F.pad(imgR,(0, right_pad, top_pad ,0))
+    imgL = F.pad(imgL, (0, right_pad, top_pad, 0))
+    imgR = F.pad(imgR, (0, right_pad, top_pad, 0))
 
     with torch.no_grad():
         output3 = model(imgL, imgR)

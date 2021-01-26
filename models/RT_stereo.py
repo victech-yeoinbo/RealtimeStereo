@@ -202,7 +202,7 @@ class RTStereoNet(nn.Module):
         batch_feat_l = feat_l[:,None,:,:,:].repeat(1,maxdisp*2-1, 1, 1, 1).view(-1,c,h,w)
         batch_feat_r = feat_r[:,None,:,:,:].repeat(1,maxdisp*2-1, 1, 1, 1).view(-1,c,h,w)
         cost = torch.norm(batch_feat_l - self.warp(batch_feat_r, batch_disp), 1, 1, keepdim=True)
-        cost = cost.view(b,1 ,-1, h, w).contiguous()
+        cost = cost.view(b, 1 ,-1, h, w).contiguous()
         return cost
 
     def forward(self, left, right):
