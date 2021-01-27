@@ -29,13 +29,14 @@ def disparity_loader(path):
 
 
 class myImageFloder(data.Dataset):
-    def __init__(self, left, right, left_disparity, training, loader=default_loader, dploader=disparity_loader):
+    def __init__(self, left, right, left_disparity, training, loader=default_loader, dploader=disparity_loader, calib=None):
         self.left = left
         self.right = right
         self.disp_L = left_disparity
         self.loader = loader
         self.dploader = dploader
         self.training = training
+        self.calib = calib
 
     def __getitem__(self, index):
         left = self.left[index]
@@ -51,6 +52,13 @@ class myImageFloder(data.Dataset):
         # see https://github.com/victech-dev/unstereo/blob/a545c4cdcae045716511601b329f9df4742a5b37/dataloader/dataloader.py#L106
         w, h = left_img.size
         dataL *= w
+
+        # if calib(fx*b) is not None, convert disparity to depth
+        if self.calib:
+            depth = np.zeros_like(dataL)
+            mask = dataL > 0
+            depth[mask] = calib / dataL[mask]
+            dataL = depth
 
         if self.training:
             th, tw = 256, 512
