@@ -34,6 +34,8 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='enables CUDA training')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
+parser.add_argument('--dexterdepth', action='store_true', default=True,
+                    help='enables depth prediction instead of disparity')
 args = parser.parse_args()
 
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -55,14 +57,21 @@ else:
     from dataloader import listflowfile as lt
     from dataloader import SecenFlowLoader as DA
 
+if args.datatype == 'dexter' and arg.dexterdepth:
+    from utils.pcl import query_intrinsic
+    K, baseline = query_intrinsic('dexter')
+    calib = K[0,0] * baseline
+else:
+    calib = None
+
 all_left_img, all_right_img, all_left_disp, test_left_img, test_right_img, test_left_disp = lt.dataloader(args.datapath)
 
 TrainImgLoader = torch.utils.data.DataLoader(
-        DA.myImageFloder(all_left_img, all_right_img, all_left_disp, True),
+        DA.myImageFloder(all_left_img, all_right_img, all_left_disp, True, calib=calib),
         batch_size=12, shuffle=True, num_workers=8, drop_last=False)
 
 TestImgLoader = torch.utils.data.DataLoader(
-        DA.myImageFloder(test_left_img, test_right_img, test_left_disp, False),
+        DA.myImageFloder(test_left_img, test_right_img, test_left_disp, False, calib=calib),
         batch_size=8, shuffle=False, num_workers=4, drop_last=False)
 
 if args.model == 'stackhourglass':
@@ -70,7 +79,7 @@ if args.model == 'stackhourglass':
 elif args.model == 'basic':
     model = basic(args.maxdisp)
 elif args.model == 'RTStereoNet':
-    model = RTStereoNet(args.maxdisp)
+    model = RTStereoNet(args.maxdisp, calib)
 else:
     print('no model')
 
