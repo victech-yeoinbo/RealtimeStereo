@@ -29,14 +29,14 @@ def disparity_loader(path):
 
 
 class myImageFloder(data.Dataset):
-    def __init__(self, left, right, left_disparity, training, loader=default_loader, dploader=disparity_loader, calib=None):
+    def __init__(self, left, right, left_disparity, training, loader=default_loader, dploader=disparity_loader, fxb=None):
         self.left = left
         self.right = right
         self.disp_L = left_disparity
         self.loader = loader
         self.dploader = dploader
         self.training = training
-        self.calib = calib
+        self.fxb = fxb
 
     def __getitem__(self, index):
         left = self.left[index]
@@ -53,11 +53,11 @@ class myImageFloder(data.Dataset):
         w, h = left_img.size
         dataL *= w
 
-        # if calib(fx*b) is not None, convert disparity to depth
-        if self.calib:
+        # if fxb is not None, convert disparity to depth
+        if self.fxb:
             depth = np.zeros_like(dataL)
             mask = dataL > 0
-            depth[mask] = calib / dataL[mask]
+            depth[mask] = self.fxb / dataL[mask]
             dataL = depth
 
         if self.training:

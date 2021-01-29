@@ -14,21 +14,23 @@ import math
 from models import *
 
 parser = argparse.ArgumentParser(description='PSMNet')
-parser.add_argument('--maxdisp', type=int ,default=192,
+parser.add_argument('--maxdisp', type=int, default=192,
                     help='maxium disparity')
-parser.add_argument('--model', default='RTStereoNet',
+parser.add_argument('--maxdepth', type=int, default=96,
+                    help='maxium depth')
+parser.add_argument('--model', default='RTStereoDepthNet',
                     help='select model')
-parser.add_argument('--datatype', default='2015',
+parser.add_argument('--datatype', default='dexter',
                     help='datapath')
-parser.add_argument('--datapath', default='/media/jiaren/ImageNet/SceneFlowData/',
+parser.add_argument('--datapath', default='/workspace/AnyNet/dataset_dexter',
                     help='datapath')
-parser.add_argument('--epochs', type=int, default=300,
+parser.add_argument('--epochs', type=int, default=250,
                     help='number of epochs to train')
 parser.add_argument('--lr', type=float, default=5e-4,
                     help='learning rate')
 parser.add_argument('--loadmodel', default= None,
                     help='load model')
-parser.add_argument('--savemodel', default='./',
+parser.add_argument('--savemodel', default='./result',
                     help='save model')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='enables CUDA training')
@@ -57,21 +59,21 @@ else:
     from dataloader import listflowfile as lt
     from dataloader import SecenFlowLoader as DA
 
-if args.datatype == 'dexter' and arg.dexterdepth:
+if args.datatype == 'dexter' and args.dexterdepth:
     from utils.pcl import query_intrinsic
     K, baseline = query_intrinsic('dexter')
-    calib = K[0,0] * baseline
+    fxb = K[0,0] * baseline
 else:
-    calib = None
+    fxb = None
 
 all_left_img, all_right_img, all_left_disp, test_left_img, test_right_img, test_left_disp = lt.dataloader(args.datapath)
 
-TrainImgLoader = torch.utils.data.DataLoader(
-        DA.myImageFloder(all_left_img, all_right_img, all_left_disp, True, calib=calib),
+trainImgLoader = torch.utils.data.DataLoader(
+        DA.myImageFloder(all_left_img, all_right_img, all_left_disp, True, fxb=fxb),
         batch_size=12, shuffle=True, num_workers=8, drop_last=False)
 
-TestImgLoader = torch.utils.data.DataLoader(
-        DA.myImageFloder(test_left_img, test_right_img, test_left_disp, False, calib=calib),
+testImgLoader = torch.utils.data.DataLoader(
+        DA.myImageFloder(test_left_img, test_right_img, test_left_disp, False, fxb=fxb),
         batch_size=8, shuffle=False, num_workers=4, drop_last=False)
 
 if args.model == 'stackhourglass':
@@ -79,7 +81,9 @@ if args.model == 'stackhourglass':
 elif args.model == 'basic':
     model = basic(args.maxdisp)
 elif args.model == 'RTStereoNet':
-    model = RTStereoNet(args.maxdisp, calib)
+    model = RTStereoNet(args.maxdisp, fxb)
+elif args.model == 'RTStereoDepthNet':
+    model = RTStereoDepthNet(args.maxdepth, fxb)
 else:
     print('no model')
 
@@ -96,43 +100,43 @@ print('Number of model parameters: {}'.format(sum([p.data.nelement() for p in mo
 
 optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.9, 0.999), weight_decay=1e-4)
 
-def train(imgL, imgR, disp_L):
+def train(imgL, imgR, gtL):
     model.train()
 
     if args.cuda:
-        imgL, imgR, disp_true = imgL.cuda(), imgR.cuda(), disp_L.cuda()
+        imgL, imgR, gtL = imgL.cuda(), imgR.cuda(), gtL.cuda()
 
     #---------
-    mask = disp_true < args.maxdisp
+    mask = gtL < (args.maxdepth if fxb else args.maxdisp)
     mask.detach_()
     #---------
     optimizer.zero_grad()
     
-    if args.model == 'stackhourglass' or args.model == 'RTStereoNet':
-        output1, output2, output3 = model(imgL,imgR)
+    if args.model in ['stackhourglass', 'RTStereoNet', 'RTStereoDepthNet']:
+        output1, output2, output3 = model(imgL, imgR)
         output1 = torch.squeeze(output1, 1)
         output2 = torch.squeeze(output2, 1)
         output3 = torch.squeeze(output3, 1)
-        loss = (0.25*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True)
-            + 0.5*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True)
-            + F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True))
+        loss = (0.25*F.smooth_l1_loss(output1[mask], gtL[mask], size_average=True)
+            + 0.5*F.smooth_l1_loss(output2[mask], gtL[mask], size_average=True)
+            + F.smooth_l1_loss(output3[mask], gtL[mask], size_average=True))
     elif args.model == 'basic':
         output = model(imgL, imgR)
         output = torch.squeeze(output, 1)
-        loss = F.smooth_l1_loss(output[mask], disp_true[mask], size_average=True)
+        loss = F.smooth_l1_loss(output[mask], dispgtL_true[mask], size_average=True)
 
     loss.backward()
     optimizer.step()
 
     return loss.data
 
-def test(imgL, imgR, disp_true):
+def test(imgL, imgR, gtL):
     model.eval()
 
     if args.cuda:
-        imgL, imgR, disp_true = imgL.cuda(), imgR.cuda(), disp_true.cuda()
+        imgL, imgR, gtL = imgL.cuda(), imgR.cuda(), gtL.cuda()
     #---------
-    mask = disp_true < 192
+    mask = gtL < (args.maxdepth if fxb else args.maxdisp)
     #---------
 
     if imgL.shape[2] % 16 != 0:
@@ -159,11 +163,11 @@ def test(imgL, imgR, disp_true):
     else:
         img = output3
 
-    if len(disp_true[mask])==0:
+    if len(gtL[mask]) == 0:
         loss = 0
     else:
-        loss = F.l1_loss(img[mask], disp_true[mask])
-        #loss = torch.mean(torch.abs(img[mask]-disp_true[mask]))  # end-point-error
+        loss = F.l1_loss(img[mask], gtL[mask])
+        #loss = torch.mean(torch.abs(img[mask]-gtL[mask]))  # end-point-error
 
     return loss.data.cpu()
 
@@ -216,22 +220,22 @@ def main():
 
         ## training
         total_train_loss = 0
-        for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(TrainImgLoader):
+        for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(trainImgLoader):
             loss = train(imgL_crop, imgR_crop, disp_crop_L)
-            print('epoch %d : [%d/%d] training loss = %.3f' % (epoch, batch_idx, len(TrainImgLoader), loss))
+            print('epoch %d : [%d/%d] training loss = %.3f' % (epoch, batch_idx, len(trainImgLoader), loss))
             total_train_loss += loss
-        avg_train_loss = total_train_loss/len(TrainImgLoader)
+        avg_train_loss = total_train_loss/len(trainImgLoader)
         writer.add_scalar("Loss/train", avg_train_loss, epoch)
         print('epoch %d : total training loss = %.3f, time = %.2f'
              % (epoch, avg_train_loss, time.time() - start_epoch_time))
 
         ## test
         total_test_loss = 0
-        for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
+        for batch_idx, (imgL, imgR, disp_L) in enumerate(testImgLoader):
             test_loss = test(imgL, imgR, disp_L)
             total_test_loss += test_loss
-            print('epoch %d : [%d/%d] test loss = %.3f' % (epoch, batch_idx, len(TestImgLoader), test_loss))
-        avg_test_loss = total_test_loss/len(TestImgLoader)
+            print('epoch %d : [%d/%d] test loss = %.3f' % (epoch, batch_idx, len(testImgLoader), test_loss))
+        avg_test_loss = total_test_loss/len(testImgLoader)
         writer.add_scalar("Epe/val", avg_test_loss, epoch)
         print('epoch %d : total test loss = %.3f' % (epoch, avg_test_loss))
 
@@ -240,7 +244,7 @@ def main():
         torch.save({
             'epoch': epoch,
             'state_dict': model.state_dict(),
-            'train_loss': total_train_loss/len(TrainImgLoader),
+            'train_loss': total_train_loss/len(trainImgLoader),
         }, savefilename)
 
         ## time
@@ -255,5 +259,5 @@ if __name__ == '__main__':
     main()
 
 '''
-python3 main.py --maxdisp 192 --model RTStereoNet --datapath /workspace/AnyNet/dataset_dexter --datatype dexter --epochs 300 --savemodel /workspace/RealtimeStereo/result
+python3 main.py --model RTStereoNet
 '''
