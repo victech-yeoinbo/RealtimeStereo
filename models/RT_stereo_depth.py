@@ -9,7 +9,7 @@ import numpy as np
 norm_layer2d = nn.BatchNorm2d 
 norm_layer3d = nn.BatchNorm3d 
 
-def convbn(in_planes, out_planes, kernel_size, stride, pad, dilation, groups = 1):
+def convbn(in_planes, out_planes, kernel_size, stride, pad, dilation, groups=1):
     return nn.Sequential(
         nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride,
                   padding=dilation if dilation > 1 else pad, dilation=dilation, groups=groups, bias=False),
@@ -145,7 +145,7 @@ class RTStereoDepthNet(nn.Module):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
             elif isinstance(m, nn.Conv3d):
-                n = m.kernel_size[0] * m.kernel_size[1]*m.kernel_size[2] * m.out_channels
+                n = m.kernel_size[0] * m.kernel_size[1] * m.kernel_size[2] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
@@ -190,14 +190,14 @@ class RTStereoDepthNet(nn.Module):
         x_warped = nn.functional.grid_sample(x, grid, align_corners=True)
         return x_warped
 
-    def _build_volume(self, feat_l, feat_r, fxb, depth, start_depth_offset, end_depth_offset):
+    def _build_volume(self, feat_l, feat_r, fxb, depth, depth_offsets):
         b, _, h, w = feat_l.size()
-        d = end_depth_offset - start_depth_offset
+        d = len(depth_offsets)
 
         # [b, 1, h, w] -> [b, 1, d, h, w]
         depth = depth.unsqueeze(dim=2).repeat(1, 1, d, 1, 1)
-        depth_offset = torch.arange(start_depth_offset, end_depth_offset).cuda().float().requires_grad_(False) # [d]
-        depth_offset = depth_offset.view(1, 1, -1, 1, 1).repeat(b, 1, 1, h, w) # [b, 1, d, h, w]
+        depth_offset = torch.tensor(depth_offsets).cuda().float() # [d]
+        depth_offset = depth_offset.view(1, 1, -1, 1, 1).repeat(b, 1, 1, h, w).requires_grad_(False) # [b, 1, d, h, w]
         disp = fxb / (depth + depth_offset).clip(0.1, 9999)
 
         batch_feat_l = feat_l[:, :, None, :, :].repeat(1, 1, d, 1, 1) # [b, c, d, h, w]
@@ -218,32 +218,29 @@ class RTStereoDepthNet(nn.Module):
         for stage in range(len(feats_l)):
             fh, fw = feats_l[stage].size(-2), feats_l[stage].size(-1)
             inv_scale = w // fw # image inv scale per stage. ex) 4, 8, 16
-            fxb_scaled = self.fxb * inv_scale
+            assert self.maxdepth % inv_scale == 0 # Assume maxdepth is multiple of inv_scale
+            fxb_scaled = self.fxb / inv_scale
 
+            detph_offset_strides = [8, 4, 2]
             if stage > 0:
-                start_depth_offset = -2
-                end_depth_offset = 3
-                depth = F.upsample(pred[stage-1], (fh, fw), mode='bilinear') / inv_scale
+                depth_offsets = [d * detph_offset_strides[stage] for d in range(-2, 3)]
+                depth = F.upsample(pred[stage-1], (fh, fw), mode='bilinear')
                 cost = self._build_volume(feats_l[stage], feats_r[stage], fxb_scaled,
-                                          depth, start_depth_offset, end_depth_offset)
+                                          depth, depth_offsets)
             else:
-                assert self.maxdepth % inv_scale == 0 # Assume maxdepth is multiple of inv_scale
-                start_depth_offset = 1
-                end_depth_offset = 1 + self.maxdepth // inv_scale
+                depth_offsets = [d for d in range(1, 1 + self.maxdepth, detph_offset_strides[stage])]
                 depth = torch.zeros(b, 1, fh, fw).cuda().requires_grad_(False)
                 cost = self._build_volume(feats_l[stage], feats_r[stage], fxb_scaled,
-                                          depth, start_depth_offset, end_depth_offset)
+                                          depth, depth_offsets)
 
             cost = self.volume_postprocess[stage](cost)
             cost = cost.squeeze(1)
             if stage == 0:
-                pred_low_res = depthregression(start_depth_offset, end_depth_offset)(F.softmax(cost, dim=1))
-                pred_low_res = pred_low_res * inv_scale
+                pred_low_res = depthregression(depth_offsets)(F.softmax(cost, dim=1))
                 depth_up = F.upsample(pred_low_res, (h, w), mode='bilinear')
                 pred.append(depth_up)
             else:
-                pred_low_res = depthregression(start_depth_offset, end_depth_offset)(F.softmax(cost, dim=1))
-                pred_low_res = pred_low_res * inv_scale
+                pred_low_res = depthregression(depth_offsets)(F.softmax(cost, dim=1))
                 depth_up = F.upsample(pred_low_res, (h, w), mode='bilinear')
                 pred.append(depth_up + pred[stage-1])
         if self.training:
@@ -252,9 +249,9 @@ class RTStereoDepthNet(nn.Module):
             return pred[-1]
 
 class depthregression(nn.Module):
-    def __init__(self, start, end):
+    def __init__(self, depth):
         super(depthregression, self).__init__()
-        self.depth = torch.arange(start, end).cuda().requires_grad_(False).float().view(1, -1, 1, 1)
+        self.depth = torch.tensor(depth).cuda().requires_grad_(False).float().view(1, -1, 1, 1)
 
     def forward(self, x):
         out = torch.sum(x * self.depth, 1, keepdim=True)

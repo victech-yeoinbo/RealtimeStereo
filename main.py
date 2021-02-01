@@ -22,11 +22,11 @@ parser.add_argument('--model', default='RTStereoDepthNet',
                     help='select model')
 parser.add_argument('--datatype', default='dexter',
                     help='datapath')
-parser.add_argument('--datapath', default='/workspace/AnyNet/dataset_dexter',
+parser.add_argument('--datapath', default='/workspace/RealtimeStereo/dataset_dexter',
                     help='datapath')
 parser.add_argument('--epochs', type=int, default=250,
                     help='number of epochs to train')
-parser.add_argument('--lr', type=float, default=5e-4,
+parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate')
 parser.add_argument('--loadmodel', default= None,
                     help='load model')
@@ -70,11 +70,11 @@ all_left_img, all_right_img, all_left_disp, test_left_img, test_right_img, test_
 
 trainImgLoader = torch.utils.data.DataLoader(
         DA.myImageFloder(all_left_img, all_right_img, all_left_disp, True, fxb=fxb),
-        batch_size=12, shuffle=True, num_workers=8, drop_last=False)
+        batch_size=24, shuffle=True, num_workers=11, drop_last=False)
 
 testImgLoader = torch.utils.data.DataLoader(
         DA.myImageFloder(test_left_img, test_right_img, test_left_disp, False, fxb=fxb),
-        batch_size=8, shuffle=False, num_workers=4, drop_last=False)
+        batch_size=24, shuffle=False, num_workers=11, drop_last=False)
 
 if args.model == 'stackhourglass':
     model = stackhourglass(args.maxdisp)
@@ -172,12 +172,14 @@ def test(imgL, imgR, gtL):
     return loss.data.cpu()
 
 def adjust_learning_rate(optimizer, epoch):
-    if epoch <= 150:
+    if epoch <= 100:
         lr = args.lr
-    elif epoch <= 200:
+    elif epoch <= 140:
+        lr = args.lr * 0.5
+    elif epoch <= 160:
         lr = args.lr * 0.1
     else:
-        lr = args.lr * 0.01
+        lr = args.lr * 0.05
     print(f'lr = {lr}')
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr

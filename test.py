@@ -20,18 +20,24 @@ from dataloader import preprocess
 import dataloader.readpfm as rp
 from utils.pcl import query_intrinsic
 
-parser = argparse.ArgumentParser(description='Anynet fintune on KITTI')
+parser = argparse.ArgumentParser(description='RTStereoDepthNet on dexter')
 
 parser.add_argument('--maxdisp', type=int ,default=192,
                     help='maxium disparity')
-parser.add_argument('--model', default='RTStereoNet',
+parser.add_argument('--maxdepth', type=int, default=96,
+                    help='maxium depth')
+parser.add_argument('--model', default='RTStereoDepthNet', ## TODO 
                     help='select model')
-parser.add_argument('--loadmodel', default= None,
+parser.add_argument('--loadmodel', default='result/checkpoint_5.tar',
                     help='load model')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='enables CUDA training')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
+parser.add_argument('--dexterdepth', action='store_true', default=True,
+                    help='enables depth prediction instead of disparity')
+parser.add_argument('--dispmodel', action='store_true', default=False,
+                    help='enables depth prediction instead of disparity')
 args = parser.parse_args()
 
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -45,16 +51,30 @@ from dataloader import dexter_loader as DA
 
 # python3 test.py --loadmodel result/checkpoint_249.tar
 
-def error_estimating(disp, ground_truth, maxdisp=192):
-    gt = ground_truth
-    mask = gt > 0
-    mask = mask * (gt < maxdisp)
+# TODO 정리
+from utils.pcl import query_intrinsic
+K, baseline = query_intrinsic('dexter')
+fxb = K[0,0] * baseline
 
-    errmap = np.abs(disp - gt)
-    err3 = np.bitwise_and((errmap[mask] > 3.), (errmap[mask] / gt[mask] > 0.05)).sum()
-    return np.float64(err3) / np.float64(mask.sum())
+def epe_metric(d_est, d_gt, mask, use_np=True):
+    d_est, d_gt = d_est[mask], d_gt[mask]
+    if use_np:
+        epe = np.mean(np.abs(d_est - d_gt))
+    else:
+        epe = torch.mean(torch.abs(d_est - d_gt))
+    return epe
 
-def predict(model, imgnameL, imgnameR, cat='withrobot'):
+def disp_epe(d_est, d_gt, use_np=True):
+    mask = d_gt > 0
+    mask = mask * (d_gt < args.maxdisp)
+    return epe_metric(d_est, d_gt, use_np)
+
+def depth_epe(d_est, d_gt, use_np=True):
+    mask = d_gt > 0
+    mask = mask * (d_gt < args.maxdepth)
+    return epe_metric(d_est, d_gt, use_np)
+
+def predict(model, imgnameL, imgnameR, cat='dexter'):
     imgL = Image.open(imgnameL).convert('RGB')
     imgR = Image.open(imgnameR).convert('RGB')
     W, H = imgL.size
@@ -87,29 +107,33 @@ def predict(model, imgnameL, imgnameR, cat='withrobot'):
     dispL_gt, _ = rp.readPFM(str(dispL_gt_path))
     dispL_gt = np.ascontiguousarray(dispL_gt, dtype=np.float32)
     dispL_gt *= W # for dexter normalizing
-    depth_gt = K[0,0] * baseline / dispL_gt
+    depthL_gt = K[0,0] * baseline / dispL_gt
 
     model.eval()
 
     t0 = time.time()
     with torch.no_grad():
-        disp = model(inpL, inpR)
-        disp = torch.squeeze(disp, 1)
+        output = model(inpL, inpR)
+        output = torch.squeeze(output, 1)
 
     if top_pad != 0:
-        disp = disp[:,top_pad:,:]
+        output = output[:,top_pad:,:]
 
     t1 = time.time()
     print("*", Path(imgnameL).stem, "elspaed:", t1 - t0)
 
-    disp = disp[0].cpu().numpy()
-    #oH, oW = disp.shape
-    #disp = cv2.resize(disp, (W, H), interpolation=cv2.INTER_LINEAR) * (W / oW)
-    #disp = np.clip(disp, 0, 192)
-    depth = K[0,0] * baseline / disp
+    output = output[0].cpu().numpy()
 
-    err = error_estimating(disp, dispL_gt)
-    print(f'* err={err}')
+    if args.dispmodel:
+        disp = output
+        depth = K[0,0] * baseline / disp
+        #depth = depth.cpu().numpy()
+    else:
+        depth = output
+        disp = K[0,0] * baseline / depth
+        #disp = disp.cpu().numpy()
+
+    print(f'* disp_epe={disp_epe(disp, dispL_gt, use_np=True)}, depth_epe={depth_epe(depth, depthL_gt, use_np=True)}')
 
     return np.array(imgL), depth, K
 
@@ -119,7 +143,8 @@ if __name__ == '__main__':
     for key, value in sorted(vars(args).items()):
         print(str(key) + ': ' + str(value))
 
-    model = RTStereoNet(args.maxdisp)
+    fxb = K[0,0] * baseline
+    model = RTStereoDepthNet(args.maxdisp, fxb)
     model = nn.DataParallel(model)
     model.cuda()
 

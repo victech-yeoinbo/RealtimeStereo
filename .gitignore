@@ -2,3 +2,5 @@
 *.tar
 result/
 runs/
+
+dataset*/
