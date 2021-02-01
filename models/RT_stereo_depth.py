@@ -242,7 +242,7 @@ class RTStereoDepthNet(nn.Module):
             else:
                 pred_low_res = depthregression(depth_offsets)(F.softmax(cost, dim=1))
                 depth_up = F.upsample(pred_low_res, (h, w), mode='bilinear')
-                pred.append(depth_up + pred[stage-1])
+                pred.append(torch.clamp(depth_up + pred[stage-1], min=1)) # 1=minimum depth
         if self.training:
             return pred[0], pred[1], pred[2]
         else:

@@ -59,10 +59,12 @@ else:
     from dataloader import listflowfile as lt
     from dataloader import SecenFlowLoader as DA
 
+from utils.pcl import query_intrinsic
+K, baseline = query_intrinsic('dexter')
+fxb_dexter = K[0,0] * baseline
+
 if args.datatype == 'dexter' and args.dexterdepth:
-    from utils.pcl import query_intrinsic
-    K, baseline = query_intrinsic('dexter')
-    fxb = K[0,0] * baseline
+    fxb = fxb_dexter
 else:
     fxb = None
 
@@ -106,10 +108,9 @@ def train(imgL, imgR, gtL):
     if args.cuda:
         imgL, imgR, gtL = imgL.cuda(), imgR.cuda(), gtL.cuda()
 
-    #---------
     mask = gtL < (args.maxdepth if fxb else args.maxdisp)
     mask.detach_()
-    #---------
+
     optimizer.zero_grad()
     
     if args.model in ['stackhourglass', 'RTStereoNet', 'RTStereoDepthNet']:
@@ -117,27 +118,30 @@ def train(imgL, imgR, gtL):
         output1 = torch.squeeze(output1, 1)
         output2 = torch.squeeze(output2, 1)
         output3 = torch.squeeze(output3, 1)
-        loss = (0.25*F.smooth_l1_loss(output1[mask], gtL[mask], size_average=True)
-            + 0.5*F.smooth_l1_loss(output2[mask], gtL[mask], size_average=True)
-            + F.smooth_l1_loss(output3[mask], gtL[mask], size_average=True))
+        loss1 = F.smooth_l1_loss(output1[mask], gtL[mask], size_average=True).view(1)
+        loss2 = F.smooth_l1_loss(output2[mask], gtL[mask], size_average=True).view(1)
+        loss3 = F.smooth_l1_loss(output3[mask], gtL[mask], size_average=True).view(1)
+        loss = 0.25 * loss1 + 0.5 * loss2 + loss3
+        stage_losses = torch.cat((loss1, loss2, loss3), dim=0).detach().cpu()
     elif args.model == 'basic':
         output = model(imgL, imgR)
         output = torch.squeeze(output, 1)
-        loss = F.smooth_l1_loss(output[mask], dispgtL_true[mask], size_average=True)
+        loss1 = F.smooth_l1_loss(output[mask], gtL[mask], size_average=True)
+        loss = loss1
+        stage_losses = loss1.detach().cpu()
 
     loss.backward()
     optimizer.step()
 
-    return loss.data
+    return loss.data, stage_losses
 
 def test(imgL, imgR, gtL):
     model.eval()
 
     if args.cuda:
         imgL, imgR, gtL = imgL.cuda(), imgR.cuda(), gtL.cuda()
-    #---------
+
     mask = gtL < (args.maxdepth if fxb else args.maxdisp)
-    #---------
 
     if imgL.shape[2] % 16 != 0:
         times = imgL.shape[2]//16
@@ -164,12 +168,20 @@ def test(imgL, imgR, gtL):
         img = output3
 
     if len(gtL[mask]) == 0:
-        loss = 0
+        loss_depth = 0
+        loss_disp = 0
+    elif fxb:
+        loss_depth = F.l1_loss(img[mask], gtL[mask])
+        loss_disp = F.l1_loss(fxb_dexter / img[mask], fxb_dexter / gtL[mask])
+        loss_depth = loss_depth.data.cpu().numpy()
+        loss_disp = loss_disp.data.cpu().numpy()
     else:
-        loss = F.l1_loss(img[mask], gtL[mask])
-        #loss = torch.mean(torch.abs(img[mask]-gtL[mask]))  # end-point-error
+        loss_depth = F.l1_loss(fxb_dexter / img[mask], fxb_dexter / gtL[mask])
+        loss_disp = F.l1_loss(img[mask], gtL[mask])
+        loss_depth = loss_depth.data.cpu().numpy()
+        loss_disp = loss_disp.data.cpu().numpy()
 
-    return loss.data.cpu()
+    return loss_depth, loss_disp
 
 def adjust_learning_rate(optimizer, epoch):
     if epoch <= 100:
@@ -192,6 +204,7 @@ def epe_metric(d_est, d_gt, mask, use_np=False):
         epe = torch.mean(torch.abs(d_est - d_gt))
     return epe
 
+'''
 def error_estimating(disp, ground_truth, maxdisp=192, print_val=False):
     gt = ground_truth
     mask = gt > 0
@@ -207,6 +220,7 @@ def error_estimating(disp, ground_truth, maxdisp=192, print_val=False):
 
     # err3 = ((errmap[mask] > 3.) & (errmap[mask] / gt[mask] > 0.05)).sum()
     # return err3.float() / mask.sum().float()
+'''
 
 def main():
     writer = SummaryWriter()
@@ -215,38 +229,51 @@ def main():
     if not os.path.isdir(args.savemodel):
         os.makedirs(args.savemodel)
 
+    np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
+
     for epoch in range(0, args.epochs):
         print('This is %d-th epoch' %(epoch))
         start_epoch_time = time.time()
         adjust_learning_rate(optimizer, epoch)
 
         ## training
-        total_train_loss = 0
+        total_loss = 0
+        total_stage_losses = None
         for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(trainImgLoader):
-            loss = train(imgL_crop, imgR_crop, disp_crop_L)
+            loss, stage_losses = train(imgL_crop, imgR_crop, disp_crop_L)
             print('epoch %d : [%d/%d] training loss = %.3f' % (epoch, batch_idx, len(trainImgLoader), loss))
-            total_train_loss += loss
-        avg_train_loss = total_train_loss/len(trainImgLoader)
-        writer.add_scalar("Loss/train", avg_train_loss, epoch)
-        print('epoch %d : total training loss = %.3f, time = %.2f'
-             % (epoch, avg_train_loss, time.time() - start_epoch_time))
+            total_loss += loss
+            total_stage_losses = (total_stage_losses + stage_losses) if batch_idx != 0 else stage_losses
+        avg_loss = total_loss/len(trainImgLoader)
+        avg_stage_losses = total_stage_losses / len(trainImgLoader)
+        writer.add_scalar("Loss/train", avg_loss, epoch)
+        for si in range(len(avg_stage_losses)):
+            writer.add_scalar(f"Loss/train_{si}", avg_stage_losses[si].numpy(), epoch)
+        print('epoch %d : total training loss = %.3f, stage loss = %s, time = %.2f, '
+             % (epoch, avg_loss, avg_stage_losses.numpy(), time.time() - start_epoch_time))
 
         ## test
-        total_test_loss = 0
+        total_test_loss_depth = 0
+        total_test_loss_disp = 0
         for batch_idx, (imgL, imgR, disp_L) in enumerate(testImgLoader):
-            test_loss = test(imgL, imgR, disp_L)
-            total_test_loss += test_loss
-            print('epoch %d : [%d/%d] test loss = %.3f' % (epoch, batch_idx, len(testImgLoader), test_loss))
-        avg_test_loss = total_test_loss/len(testImgLoader)
-        writer.add_scalar("Epe/val", avg_test_loss, epoch)
-        print('epoch %d : total test loss = %.3f' % (epoch, avg_test_loss))
+            test_loss_depth, test_loss_disp = test(imgL, imgR, disp_L)
+            print('epoch %d : [%d/%d] test loss depth = %.3f, disp = %.3f' 
+                % (epoch, batch_idx, len(testImgLoader), test_loss_depth, test_loss_disp))
+            total_test_loss_depth += test_loss_depth
+            total_test_loss_disp += test_loss_disp
+        avg_test_loss_depth = total_test_loss_depth/len(testImgLoader)
+        avg_test_loss_disp = total_test_loss_disp/len(testImgLoader)
+        writer.add_scalar("Epe/val_depth", avg_test_loss_depth, epoch)
+        writer.add_scalar("Epe/val_disp", avg_test_loss_disp, epoch)
+        print('epoch %d : total test loss depth = %.3f, disp = %.3f'
+            % (epoch, avg_test_loss_depth, avg_test_loss_disp))
 
         ## save
         savefilename = args.savemodel+'/checkpoint_'+str(epoch)+'.tar'
         torch.save({
             'epoch': epoch,
             'state_dict': model.state_dict(),
-            'train_loss': total_train_loss/len(trainImgLoader),
+            'train_loss': total_loss/len(trainImgLoader),
         }, savefilename)
 
         ## time

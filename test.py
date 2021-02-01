@@ -28,7 +28,7 @@ parser.add_argument('--maxdepth', type=int, default=96,
                     help='maxium depth')
 parser.add_argument('--model', default='RTStereoDepthNet', ## TODO 
                     help='select model')
-parser.add_argument('--loadmodel', default='result/checkpoint_5.tar',
+parser.add_argument('--loadmodel', default='result/checkpoint_25.tar',
                     help='load model')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='enables CUDA training')
